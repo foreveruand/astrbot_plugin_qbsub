@@ -1,0 +1,32 @@
+{
+    "qb_url": {
+        "description": "qBittorrent WebUI 地址",
+        "type": "string",
+        "hint": "例如 http://localhost:8080",
+        "default": ""
+    },
+    "qb_username": {
+        "description": "用户名",
+        "type": "string",
+        "hint": "qBittorrent WebUI 登录用户名",
+        "default": "admin"
+    },
+    "qb_password": {
+        "description": "密码",
+        "type": "string",
+        "hint": "qBittorrent WebUI 登录密码",
+        "default": ""
+    },
+    "rss_rule": {
+        "description": "RSS 规则名称",
+        "type": "string",
+        "hint": "qBittorrent 中配置的 RSS 自动下载规则名称",
+        "default": "Sub"
+    },
+    "enable_reset_job": {
+        "description": "启用定时清理任务",
+        "type": "bool",
+        "hint": "每小时自动清理已匹配到种子的订阅关键词",
+        "default": false
+    }
+}

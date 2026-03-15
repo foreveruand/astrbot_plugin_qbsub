@@ -1,0 +1,6 @@
+name: astrbot_plugin_qbcontrol
+display_name: qBittorrent 管理
+desc: qBittorrent 种子管理插件，支持查询种子、添加RSS订阅关键词、删除和打标签。
+version: v1.0.0
+author: migration
+repo: "https://github.com/foreveruand/astrbot_plugin_qbcontrol"
