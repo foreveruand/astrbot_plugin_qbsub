@@ -169,25 +169,15 @@ class Main(Star):
 
     @filter.command("qb")
     @filter.permission_type(filter.PermissionType.ADMIN)
-    async def qb_command(self, event: AstrMessageEvent):
+    async def qb_command(self, event: AstrMessageEvent, keyword: str):
         """qBittorrent management command.
 
         Usage:
             /qb [keyword1,keyword2,...] - Query torrents and manage subscriptions
         """
-        message = event.message_str.strip()
-        keyword_text = message.replace("qb", "", 1).strip()
+        keyword_text = keyword.strip()
 
         client = await self._get_qb_client()
-
-        if not keyword_text:
-            yield event.plain_result(
-                "用法: /qb <关键词1,关键词2,...>\n"
-                "功能:\n"
-                "  - 查询包含关键词的种子\n"
-                "  - 未找到种子时，可将关键词添加到RSS订阅规则"
-            )
-            return
 
         try:
             keywords = [kw.strip() for kw in keyword_text.split(",") if kw.strip()]
