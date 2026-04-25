@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.1.3
+
+- Fix `/qb` Telegram inline keyboard flow: callback actions now refresh the same message with updated menu text instead of replacing it with plain text.
+- Keep inline keyboard available after `add/delete/tag` operations so users can continue handling remaining items in one session.
+- Add operation status section in refreshed message content to show recent action results.
+
 ## v1.1.2
 
 - Fix Telegram callback flow by adding a dedicated `@filter.callback_query()` bridge for `qbsub:*` actions.

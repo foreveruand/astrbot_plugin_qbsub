@@ -149,6 +149,54 @@ class Main(Star):
         )
         return keyboard
 
+    def _build_menu_text(
+        self,
+        menu_items: list[dict[str, Any]],
+        info_msgs: list[str] | None = None,
+        status_msgs: list[str] | None = None,
+    ) -> str:
+        text_parts = list(info_msgs or [])
+        torrent_items = [item for item in menu_items if item.get("type") == "torrent"]
+        keyword_items = [item for item in menu_items if item.get("type") == "keyword"]
+
+        if torrent_items:
+            text_parts.append(f"\n📦 查询到 {len(torrent_items)} 个种子:")
+            for item in torrent_items:
+                index = item["index"]
+                torrent = item["data"]
+                name_display = (
+                    torrent["name"][:30] + "..."
+                    if len(torrent["name"]) > 30
+                    else torrent["name"]
+                )
+                text_parts.append(
+                    f"  {index}. {name_display}\n"
+                    f"     🏁 Tracker: {torrent['tracker']}\n"
+                    f"     🕐 完成: {torrent['complete']}"
+                )
+
+        if keyword_items:
+            text_parts.append(f"\n📝 发现 {len(keyword_items)} 个新关键词待订阅:")
+            for item in keyword_items:
+                index = item["index"]
+                kw = item["data"]["keyword"]
+                text_parts.append(f"  {index}. ➕ 添加订阅: {kw}")
+
+        if status_msgs:
+            text_parts.append("\n📣 最近操作:")
+            for status in status_msgs[-3:]:
+                text_parts.append(f"  {status}")
+
+        if menu_items:
+            text_parts.append(
+                "\n💡 回复序号执行操作，或回复 'd序号' 删除，'t序号' 打标签"
+            )
+            text_parts.append("   例如: '1' 查看详情, 'd1' 删除第1个, 't1' 打标签")
+        else:
+            text_parts.append("未找到相关种子，也没有新关键词需要订阅")
+
+        return "\n".join(text_parts)
+
     @filter.callback_query()
     async def handle_qbsub_callback(self, event: TelegramCallbackQueryEvent) -> None:
         """Bridge Telegram callback events into session_waiter for qbsub interactions."""
@@ -203,50 +251,48 @@ class Main(Star):
                     else:
                         pending_keywords.append(kw)
 
-            text_parts = info_msgs.copy()
             menu_items: list[dict[str, Any]] = []
+            status_msgs: list[str] = []
 
             if torrent_list:
-                text_parts.append(f"\n📦 查询到 {len(torrent_list)} 个种子:")
                 for i, t in enumerate(torrent_list, start=1):
-                    name_display = (
-                        t["name"][:30] + "..." if len(t["name"]) > 30 else t["name"]
-                    )
-                    text_parts.append(
-                        f"  {i}. {name_display}\n"
-                        f"     🏁 Tracker: {t['tracker']}\n"
-                        f"     🕐 完成: {t['complete']}"
-                    )
                     menu_items.append({"type": "torrent", "data": t, "index": i})
 
             if pending_keywords:
-                text_parts.append(
-                    f"\n📝 发现 {len(pending_keywords)} 个新关键词待订阅:"
-                )
                 for i, kw in enumerate(pending_keywords, start=len(torrent_list) + 1):
-                    text_parts.append(f"  {i}. ➕ 添加订阅: {kw}")
                     menu_items.append(
                         {"type": "keyword", "data": {"keyword": kw}, "index": i}
                     )
 
             if not menu_items:
-                text_parts.append("未找到相关种子，也没有新关键词需要订阅")
-                yield event.plain_result("\n".join(text_parts))
+                yield event.plain_result(self._build_menu_text(menu_items, info_msgs))
                 return
 
-            text_parts.append(
-                "\n💡 回复序号执行操作，或回复 'd序号' 删除，'t序号' 打标签"
-            )
-            text_parts.append("   例如: '1' 查看详情, 'd1' 删除第1个, 't1' 打标签")
-            yield event.plain_result("\n".join(text_parts)).inline_keyboard(
-                self._build_inline_keyboard(menu_items)
-            )
+            yield event.plain_result(
+                self._build_menu_text(menu_items, info_msgs, status_msgs)
+            ).inline_keyboard(self._build_inline_keyboard(menu_items))
 
             @session_waiter(timeout=SESSION_TIMEOUT)
             async def wait_for_reply(
                 controller: SessionController, reply_event: AstrMessageEvent
             ):
-                nonlocal menu_items, torrent_list, pending_keywords
+                nonlocal menu_items, status_msgs
+
+                is_callback = hasattr(reply_event, "callback_query_id")
+
+                async def _send_status(text: str) -> None:
+                    if is_callback:
+                        status_msgs.append(text)
+                        result = reply_event.plain_result(
+                            self._build_menu_text(menu_items, info_msgs, status_msgs)
+                        )
+                        if menu_items:
+                            result.inline_keyboard(
+                                self._build_inline_keyboard(menu_items)
+                            )
+                        await reply_event.send(result)
+                        return
+                    await reply_event.send(reply_event.plain_result(text))
 
                 msg = reply_event.message_str.strip()
                 action = "view"
@@ -260,9 +306,8 @@ class Main(Star):
                 if msg.startswith(f"{QBSUB_CALLBACK_PREFIX}:"):
                     parts = msg.split(":", 2)
                     if len(parts) != 3:
-                        await reply_event.send(
-                            reply_event.plain_result("⚠️ 无效的按钮数据")
-                        )
+                        await _send_status("⚠️ 无效的按钮数据")
+                        controller.keep(timeout=SESSION_TIMEOUT, reset_timeout=True)
                         return
                     _, action, num_str = parts
                     if action == "cancel":
@@ -281,11 +326,7 @@ class Main(Star):
                 try:
                     index = int(num_str)
                 except ValueError:
-                    await reply_event.send(
-                        reply_event.plain_result(
-                            "⚠️ 请输入有效的序号，或回复 '取消' 退出"
-                        )
-                    )
+                    await _send_status("⚠️ 请输入有效的序号，或回复 '取消' 退出")
                     controller.keep(timeout=SESSION_TIMEOUT, reset_timeout=True)
                     return
 
@@ -296,9 +337,7 @@ class Main(Star):
                         break
 
                 if not item:
-                    await reply_event.send(
-                        reply_event.plain_result(f"❌ 无效序号: {index}")
-                    )
+                    await _send_status(f"❌ 无效序号: {index}")
                     controller.keep(timeout=SESSION_TIMEOUT, reset_timeout=True)
                     return
 
@@ -339,23 +378,12 @@ class Main(Star):
                         if action == "delete":
                             status = await client.delete_torrents(torrent["hash"])
                             if status:
-                                torrent_list = [
-                                    t
-                                    for t in torrent_list
-                                    if t["hash"] != torrent["hash"]
-                                ]
                                 menu_items = [
                                     mi for mi in menu_items if mi.get("index") != index
                                 ]
-                                await reply_event.send(
-                                    reply_event.plain_result(
-                                        f"✅ 已删除: {torrent['name'][:30]}"
-                                    )
-                                )
+                                await _send_status(f"✅ 已删除: {torrent['name'][:30]}")
                             else:
-                                await reply_event.send(
-                                    reply_event.plain_result("❌ 删除失败")
-                                )
+                                await _send_status("❌ 删除失败")
 
                             if not menu_items:
                                 controller.stop()
@@ -385,15 +413,9 @@ class Main(Star):
                                 torrent["hash"], tag_name
                             )
                             if status:
-                                await reply_event.send(
-                                    reply_event.plain_result(
-                                        f"✅ 已添加标签: {tag_name}"
-                                    )
-                                )
+                                await _send_status(f"✅ 已添加标签: {tag_name}")
                             else:
-                                await reply_event.send(
-                                    reply_event.plain_result("❌ 添加标签失败")
-                                )
+                                await _send_status("❌ 添加标签失败")
                             controller.keep(timeout=SESSION_TIMEOUT, reset_timeout=True)
                             return
 
@@ -401,10 +423,8 @@ class Main(Star):
                         keyword = item["data"]["keyword"]
 
                         if action not in ("view", "add"):
-                            await reply_event.send(
-                                reply_event.plain_result(
-                                    "⚠️ 关键词只支持查看操作（添加到订阅）\n回复序号即可添加"
-                                )
+                            await _send_status(
+                                "⚠️ 关键词只支持查看操作（添加到订阅）\n回复序号即可添加"
                             )
                             controller.keep(timeout=SESSION_TIMEOUT, reset_timeout=True)
                             return
@@ -415,23 +435,15 @@ class Main(Star):
                             rule["mustContain"] = "|".join(sorted(set(current_expr)))
                             await client.set_rule(self.rss_rule, rule)
 
-                            pending_keywords.remove(keyword)
                             menu_items = [
                                 mi for mi in menu_items if mi.get("index") != index
                             ]
-
-                            await reply_event.send(
-                                reply_event.plain_result(
-                                    f"✅ 已添加 '{keyword}' 到订阅规则\n"
-                                    f"当前规则: `{rule['mustContain']}`"
-                                )
+                            await _send_status(
+                                f"✅ 已添加 '{keyword}' 到订阅规则\n"
+                                f"当前规则: `{rule['mustContain']}`"
                             )
                         else:
-                            await reply_event.send(
-                                reply_event.plain_result(
-                                    f"ℹ️ '{keyword}' 已存在于规则中"
-                                )
-                            )
+                            await _send_status(f"ℹ️ '{keyword}' 已存在于规则中")
 
                         if not menu_items:
                             controller.stop()
@@ -439,15 +451,13 @@ class Main(Star):
                             controller.keep(timeout=SESSION_TIMEOUT, reset_timeout=True)
                         return
 
-                    await reply_event.send(reply_event.plain_result("⚠️ 未知菜单项类型"))
+                    await _send_status("⚠️ 未知菜单项类型")
                     controller.keep(timeout=SESSION_TIMEOUT, reset_timeout=True)
                     return
 
                 except Exception as e:
                     logger.error(f"Failed to process reply action: {e}")
-                    await reply_event.send(
-                        reply_event.plain_result(f"❌ 操作失败: {e}")
-                    )
+                    await _send_status(f"❌ 操作失败: {e}")
                     controller.keep(timeout=SESSION_TIMEOUT, reset_timeout=True)
                     return
 
