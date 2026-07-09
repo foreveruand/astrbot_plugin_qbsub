@@ -3,6 +3,8 @@ import random
 from datetime import datetime, timedelta
 from typing import Any
 
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
 from astrbot.api import AstrBotConfig
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star
@@ -253,6 +255,7 @@ class Main(Star):
 
             menu_items: list[dict[str, Any]] = []
             status_msgs: list[str] = []
+            telegram_menu_message: dict[str, Any] | None = None
 
             if torrent_list:
                 for i, t in enumerate(torrent_list, start=1):
@@ -276,22 +279,101 @@ class Main(Star):
             async def wait_for_reply(
                 controller: SessionController, reply_event: AstrMessageEvent
             ):
-                nonlocal menu_items, status_msgs
+                nonlocal menu_items, status_msgs, telegram_menu_message
 
                 is_callback = hasattr(reply_event, "callback_query_id")
+                reply_message = getattr(reply_event, "message", None)
+                if is_callback and reply_message is not None:
+                    chat = getattr(reply_message, "chat", None)
+                    chat_id = getattr(chat, "id", None)
+                    message_id = getattr(reply_message, "message_id", None)
+                    if chat_id is not None and message_id is not None:
+                        telegram_menu_message = {
+                            "chat_id": chat_id,
+                            "message_id": message_id,
+                        }
+
+                raw_update = getattr(reply_event.message_obj, "raw_message", None)
+                raw_message = getattr(raw_update, "message", None)
+                reply_to_message = getattr(raw_message, "reply_to_message", None)
+                is_telegram_text_reply = (
+                    not is_callback
+                    and hasattr(reply_event, "client")
+                    and reply_to_message is not None
+                )
+                if is_telegram_text_reply:
+                    chat = getattr(reply_to_message, "chat", None)
+                    chat_id = getattr(chat, "id", None)
+                    message_id = getattr(reply_to_message, "message_id", None)
+                    if chat_id is not None and message_id is not None:
+                        telegram_menu_message = {
+                            "chat_id": chat_id,
+                            "message_id": message_id,
+                        }
+                    user_message_id = getattr(raw_message, "message_id", None)
+                    if chat_id is not None and user_message_id is not None:
+                        try:
+                            await reply_event.client.delete_message(
+                                chat_id=chat_id, message_id=user_message_id
+                            )
+                        except Exception as e:
+                            logger.warning(f"Failed to delete Telegram reply: {e}")
 
                 async def _send_status(text: str) -> None:
-                    if is_callback:
+                    if is_callback or is_telegram_text_reply:
                         status_msgs.append(text)
-                        result = reply_event.plain_result(
-                            self._build_menu_text(menu_items, info_msgs, status_msgs)
+                        menu_text = self._build_menu_text(
+                            menu_items, info_msgs, status_msgs
                         )
-                        if menu_items:
-                            result.inline_keyboard(
-                                self._build_inline_keyboard(menu_items)
-                            )
-                        await reply_event.send(result)
+                        if is_callback:
+                            result = reply_event.plain_result(menu_text)
+                            if menu_items:
+                                result.inline_keyboard(
+                                    self._build_inline_keyboard(menu_items)
+                                )
+                            await reply_event.send(result)
+                            return
+                        if telegram_menu_message:
+                            reply_markup = None
+                            if menu_items:
+                                reply_markup = InlineKeyboardMarkup(
+                                    [
+                                        [
+                                            InlineKeyboardButton(**button)
+                                            for button in row
+                                        ]
+                                        for row in self._build_inline_keyboard(
+                                            menu_items
+                                        )
+                                    ]
+                                )
+                            try:
+                                await reply_event.client.edit_message_text(
+                                    chat_id=telegram_menu_message["chat_id"],
+                                    message_id=telegram_menu_message["message_id"],
+                                    text=menu_text,
+                                    reply_markup=reply_markup,
+                                )
+                                return
+                            except Exception as e:
+                                logger.warning(f"Failed to edit Telegram menu: {e}")
+                    await reply_event.send(reply_event.plain_result(text))
+
+                async def _finish_menu(text: str) -> None:
+                    if is_callback:
+                        await reply_event.send(reply_event.plain_result(text))
                         return
+                    if is_telegram_text_reply and telegram_menu_message:
+                        try:
+                            await reply_event.client.edit_message_text(
+                                chat_id=telegram_menu_message["chat_id"],
+                                message_id=telegram_menu_message["message_id"],
+                                text=text,
+                                reply_markup=None,
+                            )
+                            return
+                        except Exception as e:
+                            logger.warning(f"Failed to finish Telegram menu: {e}")
                     await reply_event.send(reply_event.plain_result(text))
 
                 msg = reply_event.message_str.strip()
@@ -299,7 +381,8 @@ class Main(Star):
                 num_str = msg
 
                 if msg.lower() in ("取消", "cancel", "退出", "exit"):
-                    await reply_event.send(reply_event.plain_result("已取消操作。"))
+                    await _finish_menu("已取消操作。")
+                    telegram_menu_message = None
                     controller.stop()
                     return
 
@@ -311,7 +394,10 @@ class Main(Star):
                         return
                     _, action, num_str = parts
                     if action == "cancel":
-                        await reply_event.send(reply_event.plain_result("已取消操作。"))
+                        if hasattr(reply_event, "callback_query_id"):
+                            await reply_event.answer_callback_query()
+                        await _finish_menu("已取消操作。")
+                        telegram_menu_message = None
                         controller.stop()
                         return
                     if hasattr(reply_event, "callback_query_id"):
@@ -413,10 +499,19 @@ class Main(Star):
                                 torrent["hash"], tag_name
                             )
                             if status:
+                                menu_items = [
+                                    mi for mi in menu_items if mi.get("index") != index
+                                ]
                                 await _send_status(f"✅ 已添加标签: {tag_name}")
                             else:
                                 await _send_status("❌ 添加标签失败")
-                            controller.keep(timeout=SESSION_TIMEOUT, reset_timeout=True)
+
+                            if not menu_items:
+                                controller.stop()
+                            else:
+                                controller.keep(
+                                    timeout=SESSION_TIMEOUT, reset_timeout=True
+                                )
                             return
 
                     if item["type"] == "keyword":
@@ -464,8 +559,20 @@ class Main(Star):
             try:
                 await wait_for_reply(event, session_filter=SenderSessionFilter())
             except TimeoutError:
+                if telegram_menu_message and hasattr(event, "client"):
+                    try:
+                        await event.client.edit_message_text(
+                            chat_id=telegram_menu_message["chat_id"],
+                            message_id=telegram_menu_message["message_id"],
+                            text="⏰ 等待超时，操作已取消。",
+                            reply_markup=None,
+                        )
+                        return
+                    except Exception as e:
+                        logger.warning(f"Failed to timeout Telegram menu: {e}")
                 yield event.plain_result("⏰ 等待超时，操作已取消。")
             finally:
+                telegram_menu_message = None
                 event.stop_event()
 
         except Exception as e:

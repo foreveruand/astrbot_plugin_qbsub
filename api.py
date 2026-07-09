@@ -238,7 +238,7 @@ class QB:
             return
 
         # 2. Fetch torrent list once - KEY OPTIMIZATION
-        logger.info(
+        logger.debug(
             f"Starting RSS keyword update, current {len(updated_expr)} keywords"
         )
         all_torrents = await self.get_all_torrents()

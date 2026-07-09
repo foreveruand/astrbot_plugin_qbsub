@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.1.4
+
+- Make Telegram text replies in the `/qb` menu refresh the original menu message like inline buttons.
+- Delete Telegram user reply messages when possible to keep the interactive menu clean.
+- Remove successfully tagged items from the active menu and clear menu buttons on cancel or timeout.
+
 ## v1.1.3
 
 - Fix `/qb` Telegram inline keyboard flow: callback actions now refresh the same message with updated menu text instead of replacing it with plain text.
