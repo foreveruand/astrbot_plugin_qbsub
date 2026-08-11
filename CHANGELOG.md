@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.1.5
+
+- Use AstrBot's plugin-aware logger so the qBittorrent plugin log level can be configured independently in the dashboard.
+
 ## v1.1.4
 
 - Make Telegram text replies in the `/qb` menu refresh the original menu message like inline buttons.

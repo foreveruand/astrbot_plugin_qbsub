@@ -6,14 +6,13 @@ Optimized with lazy loading, cookie caching, and batch operations.
 """
 
 import json
-import logging
 import time
 from datetime import datetime
 from typing import Any
 
 import httpx
 
-logger = logging.getLogger("astrbot")
+from astrbot.api import logger
 
 
 class QB:

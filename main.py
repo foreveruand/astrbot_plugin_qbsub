@@ -1,11 +1,10 @@
-import logging
 import random
 from datetime import datetime, timedelta
 from typing import Any
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
-from astrbot.api import AstrBotConfig
+from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star
 from astrbot.api.util import SessionController, session_waiter
@@ -17,8 +16,6 @@ from astrbot.core.utils.session_waiter import (
 )
 
 from .api import QB
-
-logger = logging.getLogger("astrbot")
 
 SESSION_TIMEOUT = 60
 QBSUB_CALLBACK_PREFIX = "qbsub"

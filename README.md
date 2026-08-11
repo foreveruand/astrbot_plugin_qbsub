@@ -65,6 +65,10 @@ Telegram 平台会在结果消息下方显示内联按钮：
 | `rss_rule` | "Sub" | RSS 规则名称 |
 | `enable_reset_job` | false | 启用定时清理任务 |
 
+## 日志
+
+插件使用 AstrBot 的独立插件日志。可在管理面板的插件详情中单独调整 qBittorrent 管理插件的日志等级，无需影响全局日志等级。
+
 ## 依赖
 
 - `httpx` - 异步 HTTP 客户端
